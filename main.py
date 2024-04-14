@@ -1,4 +1,6 @@
+import pandas as pd
 import numpy as np
+import math
 
 with open(r'C:\Users\Msi\Desktop\class_4\EE472\proje_1\ieee300cdf.txt') as fil:
  lines = [line.rstrip('\n') for line in fil]
@@ -64,6 +66,8 @@ branch_type = np.zeros((len(branch_data_follows),1))
 branch_r = np.zeros((len(branch_data_follows),1))
 branch_x = np.zeros((len(branch_data_follows),1))
 branch_b = np.zeros((len(branch_data_follows),1))  #Total
+transformer_ratio = np.zeros((len(branch_data_follows),1))
+transformer_angle = np.zeros((len(branch_data_follows),1))
 
 for bra in range(len(branch_data_follows)):
     from_bus[bra] = branch_data_follows[bra][0:4]
@@ -72,13 +76,49 @@ for bra in range(len(branch_data_follows)):
     branch_r[bra] = branch_data_follows[bra][19:29]
     branch_x[bra] = branch_data_follows[bra][29:40]
     branch_b[bra] = branch_data_follows[bra][40:50]
+    transformer_ratio[bra] = branch_data_follows[bra][76:82]
+    transformer_angle[bra] = branch_data_follows[bra][83:90]
 
 from_bus = np.int_(from_bus)
 to_bus = np.int_(to_bus)
 branch_type = np.int_(branch_type)
 branch_r = np.float_(branch_r)
-branch_x = np.float_(branch_x)
-branch_b = np.float_(branch_b)
+branch_x = np.float_(branch_x)*1j
+branch_series = branch_r+branch_x
+branch_b = np.float_(branch_b)*1j
+transformer_ratio = np.float_(transformer_ratio)
+transformer_angle = np.float_(transformer_angle)
 
 from_bus_indexed = [np.where(bus_number == element)[0][0] for element in from_bus]
 to_bus_indexed = [np.where(bus_number == element)[0][0] for element in to_bus]
+
+number_of_buses=len(bus_number)
+
+Y_bus = np.zeros((number_of_buses,number_of_buses))*1j
+
+
+for e in range(len(bus_number)):
+    Y_bus[e, e] = (bus_shunt_G[e,0]+bus_shunt_B[e,0]*1j)
+
+for entry in range(len(from_bus)):
+    branch_y = (1/(branch_series[entry,0]))+branch_b[entry,0]
+    if branch_type[entry,0] == 0:
+        Y_bus[from_bus_indexed[entry], from_bus_indexed[entry]] += branch_y
+        Y_bus[to_bus_indexed[entry], to_bus_indexed[entry]] += branch_y
+        Y_bus[from_bus_indexed[entry], to_bus_indexed[entry]] -= branch_y
+        Y_bus[to_bus_indexed[entry], from_bus_indexed[entry]] -= branch_y
+
+    if branch_type[entry] == 1 or branch_type[entry] == 2 or branch_type[entry] == 3:
+        Y_bus[from_bus_indexed[entry], from_bus_indexed[entry]] += branch_y / (transformer_ratio[entry,0]**2)
+        Y_bus[to_bus_indexed[entry], to_bus_indexed[entry]] += branch_y
+        Y_bus[from_bus_indexed[entry], to_bus_indexed[entry]] -= branch_y / transformer_ratio[entry,0]
+        Y_bus[to_bus_indexed[entry], from_bus_indexed[entry]] -= branch_y / transformer_ratio[entry,0]
+
+    if branch_type[entry] == 4:
+        Y_bus[from_bus_indexed[entry], from_bus_indexed[entry]] += branch_y / (transformer_ratio[entry,0]**2)
+        Y_bus[to_bus_indexed[entry], to_bus_indexed[entry]] += branch_y
+        rad = math.radians(transformer_angle[entry,0])
+        ratio = transformer_ratio[entry,0]*(math.cos(rad)+(math.sin(rad)*1j))
+        conj_ratio = transformer_ratio[entry,0]*(math.cos(rad)-(math.sin(rad)*1j))
+        Y_bus[from_bus_indexed[entry], to_bus_indexed[entry]] -= branch_y / conj_ratio
+        Y_bus[to_bus_indexed[entry], from_bus_indexed[entry]] -= branch_y / ratio
