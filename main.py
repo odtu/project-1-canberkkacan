@@ -1,4 +1,3 @@
-import pandas as pd
 import numpy as np
 import math
 
@@ -35,7 +34,7 @@ for bus in range(len(bus_data_follows)):
     bus_number[bus] = bus_data_follows[bus][0:4]
     bus_type[bus] = bus_data_follows[bus][24:26]
     bus_voltage[bus] = bus_data_follows[bus][27:33]
-    bus_angle[bus] = bus_data_follows[bus][33:40]
+#    bus_angle[bus] = bus_data_follows[bus][33:40]
     bus_load_mw[bus] = bus_data_follows[bus][40:49]
     bus_load_mvar[bus] = bus_data_follows[bus][49:59]
     bus_gen_mw[bus] = bus_data_follows[bus][59:67]
@@ -58,6 +57,7 @@ bus_max_limit = np.float_(bus_max_limit)
 bus_min_limit = np.float_(bus_min_limit)
 bus_shunt_G = np.float_(bus_shunt_G)
 bus_shunt_B = np.float_(bus_shunt_B)
+
 
 #Precreating the branch data arrays to prevent dynamic array creation
 from_bus = np.zeros((len(branch_data_follows),1))     #For tap Xformer, 'a' is here other is unity
@@ -93,32 +93,84 @@ from_bus_indexed = [np.where(bus_number == element)[0][0] for element in from_bu
 to_bus_indexed = [np.where(bus_number == element)[0][0] for element in to_bus]
 
 number_of_buses=len(bus_number)
+bus_numbers_consecutive = list(range(number_of_buses))
 
 Y_bus = np.zeros((number_of_buses,number_of_buses))*1j
 
 
 for e in range(len(bus_number)):
-    Y_bus[e, e] = (bus_shunt_G[e,0]+bus_shunt_B[e,0]*1j)
+    Y_bus[e, e] = (bus_shunt_G[e,0]+(bus_shunt_B[e,0]*1j))
 
 for entry in range(len(from_bus)):
-    branch_y = (1/(branch_series[entry,0]))+branch_b[entry,0]
+    branch_y = (1/(branch_series[entry,0]))
+    line_b = branch_b[entry,0]*0.5
     if branch_type[entry,0] == 0:
-        Y_bus[from_bus_indexed[entry], from_bus_indexed[entry]] += branch_y
-        Y_bus[to_bus_indexed[entry], to_bus_indexed[entry]] += branch_y
+        Y_bus[from_bus_indexed[entry], from_bus_indexed[entry]] += branch_y + line_b
+        Y_bus[to_bus_indexed[entry], to_bus_indexed[entry]] += branch_y + line_b
         Y_bus[from_bus_indexed[entry], to_bus_indexed[entry]] -= branch_y
         Y_bus[to_bus_indexed[entry], from_bus_indexed[entry]] -= branch_y
 
     if branch_type[entry] == 1 or branch_type[entry] == 2 or branch_type[entry] == 3:
-        Y_bus[from_bus_indexed[entry], from_bus_indexed[entry]] += branch_y / (transformer_ratio[entry,0]**2)
-        Y_bus[to_bus_indexed[entry], to_bus_indexed[entry]] += branch_y
+        Y_bus[from_bus_indexed[entry], from_bus_indexed[entry]] += (branch_y / (transformer_ratio[entry,0]**2)) + line_b
+        Y_bus[to_bus_indexed[entry], to_bus_indexed[entry]] += branch_y + line_b
         Y_bus[from_bus_indexed[entry], to_bus_indexed[entry]] -= branch_y / transformer_ratio[entry,0]
         Y_bus[to_bus_indexed[entry], from_bus_indexed[entry]] -= branch_y / transformer_ratio[entry,0]
 
     if branch_type[entry] == 4:
-        Y_bus[from_bus_indexed[entry], from_bus_indexed[entry]] += branch_y / (transformer_ratio[entry,0]**2)
-        Y_bus[to_bus_indexed[entry], to_bus_indexed[entry]] += branch_y
+        Y_bus[from_bus_indexed[entry], from_bus_indexed[entry]] += (branch_y / (transformer_ratio[entry,0]**2)) + line_b
+        Y_bus[to_bus_indexed[entry], to_bus_indexed[entry]] += branch_y + line_b
         rad = math.radians(transformer_angle[entry,0])
         ratio = transformer_ratio[entry,0]*(math.cos(rad)+(math.sin(rad)*1j))
         conj_ratio = transformer_ratio[entry,0]*(math.cos(rad)-(math.sin(rad)*1j))
         Y_bus[from_bus_indexed[entry], to_bus_indexed[entry]] -= branch_y / conj_ratio
         Y_bus[to_bus_indexed[entry], from_bus_indexed[entry]] -= branch_y / ratio
+
+G_bus = Y_bus.real
+B_bus = Y_bus.imag
+
+slack_bus_index = np.where(bus_type == 3)
+bus_numbers_consecutive.pop(slack_bus_index[0][0])
+aug_bus_load_mw = np.delete(bus_load_mw, slack_bus_index[0])
+aug_bus_gen_mw = np.delete(bus_gen_mw, slack_bus_index[0])
+#aug_bus_voltages = np.delete(bus_voltage, slack_bus_index[0])
+aug_bus_angles = np.delete(bus_angle, slack_bus_index[0])
+
+bus_count_pq = np.sum(bus_type == 0) + np.sum(bus_type == 1)
+bus_count_pv = np.sum(bus_type == 2)
+missmatch_len = bus_count_pq+bus_count_pv+bus_count_pq
+given_power_vector = np.zeros([missmatch_len,1])
+calculated_power_vector = np.zeros([missmatch_len,1])
+for g in range((len(bus_number)-1)):
+    given_power_vector[g, 0] = aug_bus_gen_mw[g] - aug_bus_load_mw[g]
+
+g += 1
+for m in range((len(bus_number))):
+    if (bus_type[m, 0] == 0) or (bus_type[m, 0] == 1):
+        given_power_vector[g, 0] = bus_gen_mvar[m, 0] - bus_load_mvar[m, 0]
+        g += 1
+
+#Flat start adjustment
+for volt in range((len(bus_voltage))):
+    if bus_type[volt, 0] == 0 or bus_type[volt, 0] == 1:
+        bus_voltage[volt, 0] = 1
+
+for i in range((len(bus_number)-1)):
+    for k in range((len(bus_number))):
+        calculating_bus = bus_numbers_consecutive[i]
+        angle = math.radians((bus_angle[calculating_bus, 0] - bus_angle[k, 0]))
+        cos = math.cos(angle)
+        sin = math.sin(angle)
+        calculated_power_vector[i, 0] += bus_voltage[calculating_bus, 0]*bus_voltage[k, 0]*((G_bus[calculating_bus,k]*cos)+(B_bus[calculating_bus,k]*sin))
+
+
+
+for l in range((len(bus_number))):
+    if (bus_type[l, 0] == 0) or (bus_type[l, 0] == 1):
+        i += 1
+        for k in range((len(bus_number))):
+            angle = math.radians((bus_angle[l, 0] - bus_angle[k, 0]))
+            cos = math.cos(angle)
+            sin = math.sin(angle)
+            calculated_power_vector[i, 0] += bus_voltage[l, 0]*bus_voltage[k, 0]*((G_bus[l,k]*cos)-(B_bus[l,k]*sin))
+
+mismatch_vector = calculated_power_vector - given_power_vector
